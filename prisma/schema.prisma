@@ -1,0 +1,194 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Site {
+  id             String   @id @default(cuid())
+  name           String
+  domain         String   @unique
+  wpUrl          String
+  wpUser         String
+  wpAppPassword  String   @db.Text
+  gscSiteUrl     String
+  language       String   @default("he")
+  niche          String?
+  brandTone      String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  pages          Page[]
+  keywords       Keyword[]
+  opportunities  Opportunity[]
+  articles       Article[]
+  performances   Performance[]
+  gscTokens      GscToken?
+}
+
+model GscToken {
+  id           String   @id @default(cuid())
+  siteId       String   @unique
+  accessToken  String   @db.Text
+  refreshToken String   @db.Text
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  site         Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+}
+
+model Page {
+  id          String   @id @default(cuid())
+  siteId      String
+  url         String
+  title       String?
+  wpPostId    Int?
+  status      String   @default("active")
+  lastCrawled DateTime?
+  isOrphan    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  site         Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  keywordPages KeywordPage[]
+  performances Performance[]
+  articles     Article[]
+
+  @@unique([siteId, url])
+  @@index([siteId, status])
+}
+
+model Keyword {
+  id           String   @id @default(cuid())
+  siteId       String
+  keyword      String
+  searchVolume Int?
+  difficulty   Float?
+  createdAt    DateTime @default(now())
+
+  site          Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  keywordPages  KeywordPage[]
+  opportunities Opportunity[]
+
+  @@unique([siteId, keyword])
+  @@index([siteId])
+}
+
+model KeywordPage {
+  keywordId String
+  pageId    String
+  isPrimary Boolean @default(false)
+
+  keyword Keyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  page    Page    @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@id([keywordId, pageId])
+}
+
+model Opportunity {
+  id          String   @id @default(cuid())
+  siteId      String
+  keywordId   String?
+  pageId      String?
+  type        String
+  priority    Float    @default(0)
+  status      String   @default("pending")
+  query       String
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  ctr         Float    @default(0)
+  position    Float    @default(0)
+  brief       Json?
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  site     Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  keyword  Keyword?  @relation(fields: [keywordId], references: [id])
+  articles Article[]
+
+  @@index([siteId, status])
+  @@index([siteId, priority])
+}
+
+model Article {
+  id                String    @id @default(cuid())
+  siteId            String
+  opportunityId     String?
+  pageId            String?
+  wpPostId          Int?
+  status            String    @default("pending")
+  title             String?
+  slug              String?
+  content           String?   @db.Text
+  excerpt           String?   @db.Text
+  metaTitle         String?
+  metaDescription   String?
+  schema            Json?
+  primaryKeyword    String?
+  secondaryKeywords String[]
+  contentBrief      Json?
+  wordCount         Int?
+  wpPostUrl         String?
+  errorLog          String?   @db.Text
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  publishedAt       DateTime?
+
+  site        Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  opportunity Opportunity?  @relation(fields: [opportunityId], references: [id])
+  page        Page?         @relation(fields: [pageId], references: [id])
+  images      ArticleImage[]
+
+  @@index([siteId, status])
+}
+
+model ArticleImage {
+  id        String   @id @default(cuid())
+  articleId String
+  type      String
+  url       String?
+  wpMediaId Int?
+  altText   String?
+  filename  String?
+  prompt    String?  @db.Text
+  position  String?
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+}
+
+model Performance {
+  id          String   @id @default(cuid())
+  siteId      String
+  pageId      String?
+  query       String
+  date        DateTime @db.Date
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  ctr         Float    @default(0)
+  position    Float    @default(0)
+
+  site Site  @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  page Page? @relation(fields: [pageId], references: [id])
+
+  @@unique([siteId, query, date])
+  @@index([siteId, date])
+  @@index([pageId, date])
+}
+
+model SeoAudit {
+  id         String   @id @default(cuid())
+  siteId     String
+  url        String
+  score      Int
+  issues     Json
+  createdAt  DateTime @default(now())
+
+  @@index([siteId])
+}
