@@ -2,22 +2,33 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  LayoutDashboard,
-  Target,
-  FileText,
-  RefreshCw,
-  Search,
-  Settings,
-  Zap,
+  LayoutDashboard, Target, FileText, RefreshCw,
+  Search, Settings, Zap, Map, MousePointer,
+  DollarSign, TestTube, Brain, TrendingUp,
 } from 'lucide-react'
 
 const nav = [
-  { href: '/', label: 'דשבורד', icon: LayoutDashboard },
-  { href: '/opportunities', label: 'הזדמנויות', icon: Target },
-  { href: '/articles', label: 'מאמרים', icon: FileText },
-  { href: '/refresh', label: 'רענון תוכן', icon: RefreshCw },
-  { href: '/audit', label: 'SEO אודיט', icon: Search },
-  { href: '/settings', label: 'הגדרות', icon: Settings },
+  { group: 'ליבה', items: [
+    { href: '/', label: 'דשבורד', icon: LayoutDashboard },
+    { href: '/opportunities', label: 'הזדמנויות', icon: Target },
+    { href: '/articles', label: 'מאמרים', icon: FileText },
+  ]},
+  { group: 'תוכן', items: [
+    { href: '/authority', label: 'Topical Authority', icon: Map },
+    { href: '/ctr', label: 'CTR Engine', icon: MousePointer },
+    { href: '/refresh', label: 'רענון תוכן', icon: RefreshCw },
+  ]},
+  { group: 'AI & טכני', items: [
+    { href: '/geo', label: 'GEO Engine', icon: Brain },
+    { href: '/audit', label: 'SEO אודיט', icon: Search },
+  ]},
+  { group: 'עסקי', items: [
+    { href: '/revenue', label: 'Revenue Engine', icon: DollarSign },
+    { href: '/experiments', label: 'ניסויים A/B', icon: TestTube },
+  ]},
+  { group: '', items: [
+    { href: '/settings', label: 'הגדרות', icon: Settings },
+  ]},
 ]
 
 export function Sidebar() {
@@ -37,24 +48,35 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 p-3 space-y-1">
-        {nav.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || (href !== '/' && pathname.startsWith(href))
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
-                active
-                  ? 'bg-brand-50 text-brand-700 font-medium'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              {label}
-            </Link>
-          )
-        })}
+      <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
+        {nav.map((section) => (
+          <div key={section.group}>
+            {section.group && (
+              <p className="text-xs font-medium text-slate-400 px-3 mb-1 uppercase tracking-wide">
+                {section.group}
+              </p>
+            )}
+            <div className="space-y-0.5">
+              {section.items.map(({ href, label, icon: Icon }) => {
+                const active = pathname === href || (href !== '/' && pathname.startsWith(href))
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                      active
+                        ? 'bg-brand-50 text-brand-700 font-medium'
+                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    {label}
+                  </Link>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
       <div className="p-3 border-t border-slate-200">

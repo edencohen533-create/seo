@@ -27,6 +27,14 @@ model Site {
   articles       Article[]
   performances   Performance[]
   gscTokens      GscToken?
+  intentAnalyses IntentAnalysis[]
+  topicMap       TopicMap?
+  experiments    Experiment[]
+  contentGaps    ContentGap[]
+  revenueData    RevenueData[]
+  articleRevenues ArticleRevenue[]
+  geoOptimizations GeoOptimization[]
+  linkEdges      LinkEdge[]
 }
 
 model GscToken {
@@ -57,6 +65,8 @@ model Page {
   keywordPages KeywordPage[]
   performances Performance[]
   articles     Article[]
+  sourceLinks  LinkEdge[]    @relation("SourceLinks")
+  targetLinks  LinkEdge[]    @relation("TargetLinks")
 
   @@unique([siteId, url])
   @@index([siteId, status])
@@ -143,6 +153,13 @@ model Article {
   opportunity Opportunity?  @relation(fields: [opportunityId], references: [id])
   page        Page?         @relation(fields: [pageId], references: [id])
   images      ArticleImage[]
+  titleVariants TitleVariant[]
+  experiments   Experiment[]
+  contentGaps   ContentGap[]
+  revenueData   RevenueData[]
+  articleRevenue ArticleRevenue?
+  geoOptimization GeoOptimization?
+  topicArticles TopicArticle[]
 
   @@index([siteId, status])
 }
@@ -191,4 +208,205 @@ model SeoAudit {
   createdAt  DateTime @default(now())
 
   @@index([siteId])
+}
+
+// ─── Intent Engine ───────────────────────────────────────
+model IntentAnalysis {
+  id              String   @id @default(cuid())
+  siteId          String
+  query           String
+  primaryIntent   String
+  subIntents      String[]
+  journeyStage    String
+  emotionalAngles Json
+  dominantFormat  String
+  competitorGaps  Json
+  winningOutline  Json
+  serpFeatures    String[]
+  mobilePriority  Boolean  @default(false)
+  hookSuggestion  String?  @db.Text
+  createdAt       DateTime @default(now())
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, query])
+  @@index([siteId])
+}
+
+// ─── Topical Authority Engine ─────────────────────────────
+model TopicMap {
+  id            String   @id @default(cuid())
+  siteId        String   @unique
+  niche         String
+  pillars       Json
+  clusters      Json
+  coverageScore Float    @default(0)
+  totalArticles Int      @default(0)
+  missingTopics Json
+  writingOrder  Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  site     Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  articles TopicArticle[]
+}
+
+model TopicArticle {
+  id           String   @id @default(cuid())
+  topicMapId   String
+  articleId    String?
+  keyword      String
+  type         String
+  pillarId     String?
+  cluster      String
+  status       String   @default("planned")
+  priority     Int      @default(0)
+  writingOrder Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  topicMap TopicMap @relation(fields: [topicMapId], references: [id], onDelete: Cascade)
+  article  Article? @relation(fields: [articleId], references: [id])
+}
+
+// ─── CTR Engine ────────────────────────────────────────────
+model TitleVariant {
+  id          String   @id @default(cuid())
+  articleId   String
+  title       String
+  metaTitle   String?
+  predictedCtr Float?
+  actualCtr   Float?
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  isActive    Boolean  @default(false)
+  isWinner    Boolean  @default(false)
+  reasoning   String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+}
+
+// ─── Experiment Engine ────────────────────────────────────
+model Experiment {
+  id           String   @id @default(cuid())
+  siteId       String
+  articleId    String?
+  type         String
+  name         String
+  hypothesis   String   @db.Text
+  variantA     Json
+  variantB     Json
+  metric       String
+  status       String   @default("running")
+  startedAt    DateTime @default(now())
+  endedAt      DateTime?
+  winnerId     String?
+  significance Float?
+  results      Json?
+  createdAt    DateTime @default(now())
+
+  site    Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  article Article? @relation(fields: [articleId], references: [id])
+
+  @@index([siteId, status])
+}
+
+// ─── Refresh Engine v2 ────────────────────────────────────
+model ContentGap {
+  id          String   @id @default(cuid())
+  articleId   String
+  siteId      String
+  gapType     String
+  query       String
+  missingSection String? @db.Text
+  suggestedText  String? @db.Text
+  priority    Float    @default(0)
+  status      String   @default("pending")
+  appliedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  site    Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([articleId, status])
+  @@index([siteId, priority])
+}
+
+// ─── Revenue Engine ───────────────────────────────────────
+model RevenueData {
+  id          String   @id @default(cuid())
+  siteId      String
+  date        DateTime @db.Date
+  orderId     String?
+  revenue     Float    @default(0)
+  product     String?
+  sourceUrl   String?
+  medium      String?
+  articleId   String?
+  createdAt   DateTime @default(now())
+
+  site    Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  article Article? @relation(fields: [articleId], references: [id])
+
+  @@index([siteId, date])
+  @@index([articleId])
+}
+
+model ArticleRevenue {
+  id              String   @id @default(cuid())
+  articleId       String   @unique
+  siteId          String
+  totalRevenue    Float    @default(0)
+  totalOrders     Int      @default(0)
+  avgOrderValue   Float    @default(0)
+  conversionRate  Float    @default(0)
+  revenuePerVisit Float    @default(0)
+  lastCalculated  DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  site    Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, totalRevenue])
+}
+
+// ─── GEO Engine (Generative Engine Optimization) ─────────
+model GeoOptimization {
+  id                String   @id @default(cuid())
+  articleId         String
+  siteId            String
+  directAnswers     Json
+  entityMap         Json
+  citationScore     Float?
+  aiReadabilityScore Float?
+  structuredQA      Json
+  featuredSnippet   String?  @db.Text
+  aiSearchSignals   Json
+  lastAnalyzed      DateTime @default(now())
+  createdAt         DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  site    Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId])
+}
+
+// ─── Internal Link Graph ──────────────────────────────────
+model LinkEdge {
+  id           String   @id @default(cuid())
+  siteId       String
+  sourcePageId String
+  targetPageId String
+  anchorText   String
+  isAutoAdded  Boolean  @default(false)
+  pageRankFlow Float    @default(0)
+  createdAt    DateTime @default(now())
+
+  site       Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  sourcePage Page @relation("SourceLinks", fields: [sourcePageId], references: [id], onDelete: Cascade)
+  targetPage Page @relation("TargetLinks", fields: [targetPageId], references: [id], onDelete: Cascade)
+
+  @@unique([sourcePageId, targetPageId])
+  @@index([siteId])
+  @@index([targetPageId])
 }
