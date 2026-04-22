@@ -72,6 +72,9 @@ export async function fetchSearchAnalytics(
     endDate: string
     dimensions?: string[]
     rowLimit?: number
+    dimensionFilterGroups?: {
+      filters: { dimension: string; expression: string; operator?: string }[]
+    }[]
   }
 ): Promise<GscRow[]> {
   const auth = await getAuthenticatedClient(siteId)
@@ -91,6 +94,7 @@ export async function fetchSearchAnalytics(
         dimensions,
         rowLimit: Math.min(rowLimit - rows.length, 5000),
         startRow,
+        ...(options.dimensionFilterGroups ? { dimensionFilterGroups: options.dimensionFilterGroups } : {}),
       },
     })
 

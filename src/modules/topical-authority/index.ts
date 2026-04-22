@@ -263,3 +263,102 @@ export async function getNextToWrite(siteId: string, count = 5) {
     },
   })
 }
+
+export async function analyzeClusterGaps(siteId: string): Promise<{
+  pillar: string
+  coveredClusters: number
+  totalClusters: number
+  gapScore: number
+  priorityKeywords: string[]
+  competitorAdvantage: string[]
+}[]> {
+  const topicMap = await prisma.topicMap.findUnique({
+    where: { siteId },
+    include: { articles: { where: { status: 'published' } } },
+  })
+
+  if (!topicMap) return []
+
+  const pillars = topicMap.pillars as unknown as TopicPillar[]
+  const publishedKeywords = new Set(topicMap.articles.map((a) => a.keyword.toLowerCase()))
+
+  const gaps = pillars.map((pillar) => {
+    const total = pillar.clusters.length
+    const covered = pillar.clusters.filter((c) =>
+      publishedKeywords.has(c.keyword.toLowerCase()) || c.existingArticleId
+    ).length
+    const uncovered = pillar.clusters.filter((c) =>
+      !publishedKeywords.has(c.keyword.toLowerCase()) && !c.existingArticleId
+    )
+
+    return {
+      pillar: pillar.keyword,
+      coveredClusters: covered,
+      totalClusters: total,
+      gapScore: total > 0 ? Math.round(((total - covered) / total) * 100) : 0,
+      priorityKeywords: uncovered
+        .sort((a, b) => a.writingPriority - b.writingPriority)
+        .slice(0, 5)
+        .map((c) => c.keyword),
+      competitorAdvantage: uncovered
+        .filter((c) => c.type === 'comparison' || c.type === 'supporting')
+        .slice(0, 3)
+        .map((c) => c.keyword),
+    }
+  })
+
+  return gaps.sort((a, b) => b.gapScore - a.gapScore)
+}
+
+export async function measurePillarAuthority(siteId: string): Promise<AuthorityScore[]> {
+  const topicMap = await prisma.topicMap.findUnique({ where: { siteId } })
+  if (!topicMap) return []
+
+  const pillars = topicMap.pillars as unknown as TopicPillar[]
+  const snapshots = await prisma.performanceSnapshot.groupBy({
+    by: ['url'],
+    where: { siteId, period: 'daily' },
+    _avg: { position: true, ctr: true },
+    _sum: { clicks: true },
+  })
+
+  const urlPerfMap = new Map(snapshots.map((s) => [
+    s.url,
+    { position: s._avg.position ?? 50, ctr: s._avg.ctr ?? 0, clicks: s._sum.clicks ?? 0 },
+  ]))
+
+  const articles = await prisma.article.findMany({
+    where: { siteId, status: 'published' },
+    select: { id: true, primaryKeyword: true, wpPostUrl: true },
+  })
+
+  return pillars.map((pillar) => {
+    const clusterKeywords = new Set(pillar.clusters.map((c) => c.keyword.toLowerCase()))
+    const pillarArticles = articles.filter((a) =>
+      clusterKeywords.has((a.primaryKeyword ?? '').toLowerCase()) ||
+      (a.primaryKeyword ?? '').toLowerCase().includes(pillar.keyword.toLowerCase())
+    )
+
+    const published = pillarArticles.length
+    const needed = pillar.clusters.length + 1
+    const avgPosition = pillarArticles.length > 0
+      ? pillarArticles.reduce((sum, art) => {
+          const perf = urlPerfMap.get(art.wpPostUrl ?? '')
+          return sum + (perf?.position ?? 50)
+        }, 0) / pillarArticles.length
+      : 50
+
+    const score = Math.max(0, Math.min(100,
+      (published / needed) * 50 +
+      (Math.max(0, 50 - avgPosition) / 50) * 50
+    ))
+
+    return {
+      pillar: pillar.keyword,
+      score: Math.round(score),
+      articlesPublished: published,
+      articlesNeeded: needed,
+      coverageGap: Math.max(0, needed - published),
+    }
+  })
+}

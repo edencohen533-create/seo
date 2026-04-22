@@ -174,6 +174,134 @@ export async function buildLinkGraph(siteId: string): Promise<LinkGraphAnalysis>
   }
 }
 
+export interface OverLinkingReport {
+  pageId: string
+  url: string
+  title: string | null
+  outboundLinks: number
+  inboundLinks: number
+  dilutionScore: number
+  recommendation: string
+  pagesToRemoveFrom: string[]
+}
+
+export interface SemanticSimilarity {
+  sourceId: string
+  targetId: string
+  sourceTitle: string
+  targetTitle: string
+  similarityScore: number
+  sharedKeywords: string[]
+  linkOpportunity: 'high' | 'medium' | 'low'
+}
+
+export async function detectOverLinking(siteId: string): Promise<OverLinkingReport[]> {
+  const linkData = await prisma.linkEdge.groupBy({
+    by: ['sourcePageId'],
+    where: { siteId },
+    _count: { id: true },
+  })
+
+  const overLinked = linkData.filter((d) => d._count.id > 15)
+  if (overLinked.length === 0) return []
+
+  const reports: OverLinkingReport[] = []
+
+  for (const item of overLinked) {
+    const page = await prisma.page.findUnique({
+      where: { id: item.sourcePageId },
+      select: { url: true, title: true, id: true },
+    })
+    if (!page) continue
+
+    const inbound = await prisma.linkEdge.count({ where: { siteId, targetPageId: item.sourcePageId } })
+
+    const dilutionScore = Math.min(100, Math.round((item._count.id / 20) * 100))
+    const pagesToRemoveFrom: string[] = []
+
+    if (item._count.id > 20) {
+      const lowestValue = await prisma.linkEdge.findMany({
+        where: { sourcePageId: item.sourcePageId, siteId },
+        orderBy: { pageRankFlow: 'asc' },
+        take: 3,
+        include: { targetPage: { select: { url: true } } },
+      })
+      pagesToRemoveFrom.push(...lowestValue.map((e) => e.targetPage.url))
+    }
+
+    reports.push({
+      pageId: page.id,
+      url: page.url,
+      title: page.title,
+      outboundLinks: item._count.id,
+      inboundLinks: inbound,
+      dilutionScore,
+      recommendation: dilutionScore > 80
+        ? `Critical: ${item._count.id} outbound links dilutes PageRank severely — remove ${item._count.id - 10} links`
+        : `Warning: ${item._count.id} outbound links — consider reducing to under 15`,
+      pagesToRemoveFrom,
+    })
+  }
+
+  return reports.sort((a, b) => b.dilutionScore - a.dilutionScore)
+}
+
+export async function findSemanticOpportunities(
+  siteId: string,
+  limit = 20
+): Promise<SemanticSimilarity[]> {
+  const articles = await prisma.article.findMany({
+    where: { siteId, status: 'published' },
+    select: { id: true, title: true, primaryKeyword: true, secondaryKeywords: true, pageId: true, wpPostUrl: true },
+    take: 50,
+  })
+
+  if (articles.length < 2) return []
+
+  const existingLinks = await prisma.linkEdge.findMany({
+    where: { siteId },
+    select: { sourcePageId: true, targetPageId: true },
+  })
+  const linkedPairs = new Set(existingLinks.map((e) => `${e.sourcePageId}:${e.targetPageId}`))
+
+  const opportunities: SemanticSimilarity[] = []
+
+  for (let i = 0; i < articles.length; i++) {
+    for (let j = i + 1; j < articles.length; j++) {
+      const a = articles[i]
+      const b = articles[j]
+
+      if (!a.pageId || !b.pageId) continue
+      if (linkedPairs.has(`${a.pageId}:${b.pageId}`) || linkedPairs.has(`${b.pageId}:${a.pageId}`)) continue
+
+      const aKeywords = [(a.primaryKeyword ?? ''), ...(a.secondaryKeywords ?? [])].map((k) => k.toLowerCase())
+      const bKeywords = [(b.primaryKeyword ?? ''), ...(b.secondaryKeywords ?? [])].map((k) => k.toLowerCase())
+
+      const shared = aKeywords.filter((k) => bKeywords.some((bk) => bk.includes(k) || k.includes(bk)))
+      if (shared.length === 0) continue
+
+      const maxPossible = Math.min(aKeywords.length, bKeywords.length)
+      const score = Math.min(1.0, shared.length / Math.max(1, maxPossible))
+
+      if (score < 0.15) continue
+
+      opportunities.push({
+        sourceId: a.pageId,
+        targetId: b.pageId,
+        sourceTitle: a.title ?? '',
+        targetTitle: b.title ?? '',
+        similarityScore: parseFloat(score.toFixed(2)),
+        sharedKeywords: shared.slice(0, 5),
+        linkOpportunity: score > 0.5 ? 'high' : score > 0.3 ? 'medium' : 'low',
+      })
+    }
+  }
+
+  return opportunities
+    .sort((a, b) => b.similarityScore - a.similarityScore)
+    .slice(0, limit)
+}
+
 export async function suggestLinkInjections(
   siteId: string,
   limit = 20

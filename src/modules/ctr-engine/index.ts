@@ -260,7 +260,6 @@ export function predictCtr(
   intent: string,
   hasNumber: boolean
 ): number {
-  // Base CTR by position (industry average)
   const baseCtrByPosition: Record<number, number> = {
     1: 28.5, 2: 15.7, 3: 11.0, 4: 8.0, 5: 7.2,
     6: 5.1, 7: 4.0, 8: 3.2, 9: 2.8, 10: 2.5,
@@ -268,7 +267,6 @@ export function predictCtr(
   const pos = Math.min(Math.max(Math.round(position), 1), 10)
   let ctr = baseCtrByPosition[pos] ?? 2.0
 
-  // Modifiers
   if (hasPowerWord) ctr *= 1.15
   if (hasNumber) ctr *= 1.12
   if (titleLength >= 50 && titleLength <= 60) ctr *= 1.08
@@ -277,4 +275,112 @@ export function predictCtr(
   if (intent === 'navigational') ctr *= 0.85
 
   return Math.min(parseFloat(ctr.toFixed(2)), 35)
+}
+
+export interface DeviceCtrBreakdown {
+  mobile: { impressions: number; clicks: number; ctr: number; position: number }
+  desktop: { impressions: number; clicks: number; ctr: number; position: number }
+  tablet: { impressions: number; clicks: number; ctr: number; position: number }
+  mobileCtrLag: number
+  recommendation: string
+}
+
+export async function analyzeDeviceCtr(
+  siteId: string,
+  articleId: string
+): Promise<DeviceCtrBreakdown> {
+  const { fetchSearchAnalytics } = await import('@/lib/gsc')
+  const { format, subDays } = await import('date-fns')
+
+  const article = await prisma.article.findUniqueOrThrow({
+    where: { id: articleId },
+    include: { site: true },
+  })
+
+  const endDate = format(new Date(), 'yyyy-MM-dd')
+  const startDate = format(subDays(new Date(), 28), 'yyyy-MM-dd')
+
+  const [mobileData, desktopData, tabletData] = await Promise.all([
+    fetchSearchAnalytics(siteId, article.site.gscSiteUrl, {
+      startDate, endDate, dimensions: ['page'],
+      dimensionFilterGroups: [{ filters: [{ dimension: 'device', expression: 'MOBILE' }] }],
+    }),
+    fetchSearchAnalytics(siteId, article.site.gscSiteUrl, {
+      startDate, endDate, dimensions: ['page'],
+      dimensionFilterGroups: [{ filters: [{ dimension: 'device', expression: 'DESKTOP' }] }],
+    }),
+    fetchSearchAnalytics(siteId, article.site.gscSiteUrl, {
+      startDate, endDate, dimensions: ['page'],
+      dimensionFilterGroups: [{ filters: [{ dimension: 'device', expression: 'TABLET' }] }],
+    }),
+  ])
+
+  const pageUrl = article.wpPostUrl ?? ''
+  const slug = pageUrl.replace(/^https?:\/\/[^/]+/, '')
+
+  const sum = (rows: typeof mobileData) => {
+    const filtered = rows.filter((r) => r.page.includes(slug))
+    if (filtered.length === 0) return { impressions: 0, clicks: 0, ctr: 0, position: 0 }
+    return {
+      impressions: filtered.reduce((s, r) => s + r.impressions, 0),
+      clicks: filtered.reduce((s, r) => s + r.clicks, 0),
+      ctr: filtered.reduce((s, r) => s + r.ctr, 0) / filtered.length,
+      position: filtered.reduce((s, r) => s + r.position, 0) / filtered.length,
+    }
+  }
+
+  const mobile = sum(mobileData)
+  const desktop = sum(desktopData)
+  const tablet = sum(tabletData)
+  const mobileCtrLag = desktop.ctr > 0 ? ((desktop.ctr - mobile.ctr) / desktop.ctr) * 100 : 0
+
+  let recommendation = 'Mobile CTR matches desktop'
+  if (mobileCtrLag > 20) recommendation = 'Mobile CTR is significantly lower — consider shorter title + stronger mobile hook'
+  else if (mobileCtrLag > 10) recommendation = 'Slight mobile CTR lag — review title truncation on mobile'
+
+  return { mobile, desktop, tablet, mobileCtrLag, recommendation }
+}
+
+export async function runMetaDescriptionABTest(
+  articleId: string
+): Promise<string> {
+  const article = await prisma.article.findUniqueOrThrow({
+    where: { id: articleId },
+    select: { title: true, primaryKeyword: true, metaDescription: true, contentBrief: true },
+  })
+
+  const { generateJson } = await import('@/lib/claude')
+
+  const prompt = `
+צור 3 meta descriptions שונות לבדיקת A/B.
+
+**מאמר:** "${article.title}"
+**מילת מפתח:** ${article.primaryKeyword}
+**תיאור נוכחי:** ${article.metaDescription ?? 'אין'}
+
+כל description: 130-155 תווים, עברית, מסתיים ב-CTA שונה.
+
+החזר JSON:
+{
+  "variants": [
+    {"description": "...", "cta": "קרא עכשיו", "angle": "benefit"},
+    {"description": "...", "cta": "גלה כיצד", "angle": "curiosity"},
+    {"description": "...", "cta": "המדריך המלא", "angle": "authority"}
+  ]
+}
+`
+
+  const result = await generateJson<{ variants: { description: string; cta: string; angle: string }[] }>(prompt, {
+    model: 'claude-haiku-4-5-20251001',
+    maxTokens: 800,
+  })
+
+  const best = result.variants[0]?.description ?? article.metaDescription ?? ''
+
+  await prisma.article.update({
+    where: { id: articleId },
+    data: { metaDescription: best },
+  })
+
+  return best
 }

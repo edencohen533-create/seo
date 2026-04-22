@@ -295,6 +295,146 @@ export function buildFaqSchema(qaPairs: { q: string; a: string }[]): object {
   }
 }
 
+export interface AIOverviewOpportunity {
+  query: string
+  currentPosition: number
+  impressions: number
+  hasAIOverview: boolean
+  snippetQuality: 'optimal' | 'good' | 'needs-work'
+  directAnswerPresent: boolean
+  entityCoverage: number
+  actionItems: string[]
+  estimatedAppearanceChance: number
+}
+
+export async function findAIOverviewOpportunities(
+  siteId: string
+): Promise<AIOverviewOpportunity[]> {
+  const site = await prisma.site.findUniqueOrThrow({ where: { id: siteId }, select: { gscSiteUrl: true } })
+  const { fetchSearchAnalytics } = await import('@/lib/gsc')
+  const { format, subDays } = await import('date-fns')
+
+  const endDate = format(new Date(), 'yyyy-MM-dd')
+  const startDate = format(subDays(new Date(), 28), 'yyyy-MM-dd')
+
+  const rows = await fetchSearchAnalytics(siteId, site.gscSiteUrl, {
+    startDate,
+    endDate,
+    dimensions: ['query'],
+    rowLimit: 100,
+  })
+
+  // Focus on informational queries at positions 1-10 (likely AI Overview candidates)
+  const candidates = rows
+    .filter((r) => r.position <= 10 && r.impressions >= 50)
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, 30)
+
+  if (candidates.length === 0) return []
+
+  const geoData = await prisma.geoOptimization.findMany({
+    where: { siteId },
+    select: { articleId: true, directAnswers: true, entityMap: true, featuredSnippet: true, citationScore: true },
+  })
+
+  const prompt = `
+אתה מומחה Google AI Overviews. נתח אילו שאילתות מהרשימה הכי מתאימות להופעה ב-AI Overview.
+
+**שאילתות (עם נתוני ביצועים):**
+${candidates.slice(0, 20).map((r) => `- "${r.query}" | מיקום ${r.position.toFixed(1)} | ${r.impressions} חשיפות | CTR ${(r.ctr * 100).toFixed(1)}%`).join('\n')}
+
+AI Overviews מופיעים בעיקר ל:
+- שאילתות "מה זה", "איך ל", "למה", "מתי", "האם"
+- שאילתות מידעיות עם תשובה ישירה
+- שאילתות בריאות, פיננסים, חינוך
+- שאילתות עם הרבה PAA (People Also Ask)
+
+לכל שאילתה, נתח:
+- האם יש AI Overview (likely/unlikely)
+- איכות התוכן הנדרש
+- פעולות לשיפור
+
+החזר JSON:
+[
+  {
+    "query": "שאילתה",
+    "hasAIOverview": true | false,
+    "snippetQuality": "optimal" | "good" | "needs-work",
+    "directAnswerPresent": true | false,
+    "entityCoverage": 0-100,
+    "actionItems": ["פעולה 1", "פעולה 2"],
+    "estimatedAppearanceChance": 0-100
+  }
+]
+`
+
+  const analysis = await generateJson<{
+    query: string
+    hasAIOverview: boolean
+    snippetQuality: 'optimal' | 'good' | 'needs-work'
+    directAnswerPresent: boolean
+    entityCoverage: number
+    actionItems: string[]
+    estimatedAppearanceChance: number
+  }[]>(prompt, { model: 'claude-haiku-4-5-20251001', maxTokens: 3000 })
+
+  return analysis.map((a) => {
+    const gscRow = candidates.find((r) => r.query === a.query)
+    return {
+      ...a,
+      currentPosition: gscRow?.position ?? 0,
+      impressions: gscRow?.impressions ?? 0,
+    }
+  }).sort((x, y) => y.estimatedAppearanceChance - x.estimatedAppearanceChance)
+}
+
+export async function optimizeForAIOverview(
+  articleId: string,
+  query: string
+): Promise<string> {
+  const article = await prisma.article.findUniqueOrThrow({
+    where: { id: articleId },
+    select: { content: true, title: true, primaryKeyword: true },
+  })
+
+  const content = article.content ?? ''
+  const cleanText = content.replace(/<[^>]+>/g, ' ').substring(0, 2000)
+
+  const prompt = `
+אתה מומחה Google AI Overviews. שפר את התוכן הזה להופעה ב-AI Overview עבור השאילתה.
+
+**שאילתה:** "${query}"
+**מאמר:** "${article.title}"
+
+**תוכן נוכחי:**
+${cleanText}
+
+צור קטע HTML אחד (100-150 מילים) שמספק תשובה ישירה ומקיפה לשאילתה.
+הקטע צריך:
+1. להתחיל בתשובה הישירה (לא "במאמר זה נדון...")
+2. לכלול עובדות ומספרים ספציפיים
+3. להשתמש ב-Schema.org markup
+4. להיות בפורמט שAI יכול לסרוק בקלות
+
+החזר HTML בלבד, ללא הסבר.
+`
+
+  const snippet = await generate(prompt, { model: 'claude-sonnet-4-6', maxTokens: 500 })
+
+  // Inject at top of content
+  const h1End = content.indexOf('</h1>')
+  const updatedContent = h1End > -1
+    ? content.slice(0, h1End + 5) + '\n' + snippet + content.slice(h1End + 5)
+    : content + '\n' + snippet
+
+  await prisma.article.update({
+    where: { id: articleId },
+    data: { content: updatedContent },
+  })
+
+  return snippet
+}
+
 export function buildArticleSchema(
   title: string,
   description: string,

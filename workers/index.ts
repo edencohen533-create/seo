@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { Worker } from 'bullmq'
+import { Worker, Queue } from 'bullmq'
 import { prisma } from '../src/lib/prisma'
 import { scanOpportunities } from '../src/modules/opportunity-engine'
 import { generateContentBrief } from '../src/modules/content-brief'
@@ -7,6 +7,8 @@ import { writeArticle, saveArticleDraft } from '../src/modules/article-writer'
 import { planImages, generateAllImages } from '../src/modules/image-engine'
 import { publishArticleToDraft } from '../src/modules/publisher'
 import { runFeedbackLoop } from '../src/modules/feedback-loop'
+import { snapshotDailyPerformance, generateBIReport } from '../src/modules/data-layer'
+import { buildSiteModel } from '../src/modules/learning-engine'
 import type { ContentBrief } from '../src/modules/content-brief'
 
 const connection = {
@@ -135,6 +137,59 @@ const feedbackWorker = new Worker(
   { connection, concurrency: 1 }
 )
 
+const dataWorker = new Worker(
+  'data-snapshots',
+  async (job) => {
+    const { siteId, type } = job.data
+
+    if (type === 'snapshot') {
+      console.log(`[data] snapshotting performance for site ${siteId}`)
+      const result = await snapshotDailyPerformance(siteId)
+      console.log(`[data] snapshotted ${result.pagesSnapshotted} pages`)
+      return result
+    }
+
+    if (type === 'bi_report') {
+      console.log(`[data] generating BI report for site ${siteId}`)
+      const report = await generateBIReport(siteId)
+      return { insights: report.insights.length }
+    }
+
+    if (type === 'learn') {
+      console.log(`[data] building site model for ${siteId}`)
+      const model = await buildSiteModel(siteId)
+      console.log(`[data] found ${model.patterns.length} patterns`)
+      return { patterns: model.patterns.length }
+    }
+  },
+  { connection, concurrency: 2 }
+)
+
+dataWorker.on('completed', (job) => console.log(`[data] job ${job.id} done`))
+dataWorker.on('failed', (job, err) => console.error(`[data] job ${job?.id} failed:`, err.message))
+
+// Schedule daily snapshots for all sites
+async function scheduleDailySnapshots() {
+  const sites = await prisma.site.findMany({ select: { id: true } })
+  const dataQueue = new Queue('data-snapshots', { connection })
+
+  for (const site of sites) {
+    await dataQueue.add('snapshot', { siteId: site.id, type: 'snapshot' }, {
+      repeat: { pattern: '0 3 * * *' },
+      jobId: `snapshot-${site.id}`,
+    })
+    await dataQueue.add('learn', { siteId: site.id, type: 'learn' }, {
+      repeat: { pattern: '0 4 * * 1' },
+      jobId: `learn-${site.id}`,
+    })
+  }
+
+  await dataQueue.close()
+  console.log(`[data] scheduled snapshots for ${sites.length} sites`)
+}
+
+scheduleDailySnapshots().catch(console.error)
+
 async function getStatus(articleId: string): Promise<string> {
   const a = await prisma.article.findUnique({ where: { id: articleId }, select: { status: true } })
   return a?.status ?? 'failed'
@@ -154,6 +209,7 @@ process.on('SIGTERM', async () => {
     opportunityWorker.close(),
     articleWorker.close(),
     feedbackWorker.close(),
+    dataWorker.close(),
   ])
   process.exit(0)
 })

@@ -5,6 +5,7 @@ import {
   LayoutDashboard, Target, FileText, RefreshCw,
   Search, Settings, Zap, Map, MousePointer,
   DollarSign, TestTube, Brain, TrendingUp,
+  Activity, BookOpen,
 } from 'lucide-react'
 
 const nav = [
@@ -21,10 +22,14 @@ const nav = [
   { group: 'AI & טכני', items: [
     { href: '/geo', label: 'GEO Engine', icon: Brain },
     { href: '/audit', label: 'SEO אודיט', icon: Search },
+    { href: '/vitals', label: 'Core Web Vitals', icon: Activity },
+  ]},
+  { group: 'אינטיליגנציה', items: [
+    { href: '/learning', label: 'Learning Engine', icon: BookOpen },
+    { href: '/experiments', label: 'ניסויים A/B', icon: TestTube },
   ]},
   { group: 'עסקי', items: [
     { href: '/revenue', label: 'Revenue Engine', icon: DollarSign },
-    { href: '/experiments', label: 'ניסויים A/B', icon: TestTube },
   ]},
   { group: '', items: [
     { href: '/settings', label: 'הגדרות', icon: Settings },

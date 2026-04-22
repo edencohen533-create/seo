@@ -297,6 +297,132 @@ export async function getRevenueDashboard(siteId: string): Promise<RevenueDashbo
   }
 }
 
+export interface ArticleLTV {
+  articleId: string
+  title: string
+  url: string
+  firstOrderRevenue: number
+  repeatOrderRevenue: number
+  ltv: number
+  repeatRate: number
+  avgRepeatOrders: number
+  ltvRatio: number
+  tier: 'platinum' | 'gold' | 'silver' | 'bronze'
+}
+
+export interface ArticleROI {
+  articleId: string
+  title: string
+  totalRevenue: number
+  estimatedProductionCost: number
+  roi: number
+  paybackMonths: number
+  monthlyRevenue: number
+  recommendation: string
+}
+
+export async function calculateArticleLTV(siteId: string): Promise<ArticleLTV[]> {
+  const revenueData = await prisma.revenueData.findMany({
+    where: { siteId, articleId: { not: null } },
+    include: { article: { select: { id: true, title: true, wpPostUrl: true } } },
+    orderBy: { date: 'asc' },
+  })
+
+  const articleOrders = new Map<string, { firstOrder: number; repeatOrders: number[]; orderId: Set<string> }>()
+  const customerFirstTouch = new Map<string, string>() // orderId → articleId
+
+  for (const row of revenueData) {
+    if (!row.articleId) continue
+    const orderId = row.orderId ?? row.id
+
+    if (!customerFirstTouch.has(orderId)) {
+      customerFirstTouch.set(orderId, row.articleId)
+    }
+
+    const existing = articleOrders.get(row.articleId) ?? { firstOrder: 0, repeatOrders: [], orderId: new Set() }
+    if (!existing.orderId.has(orderId)) {
+      existing.orderId.add(orderId)
+      if (customerFirstTouch.get(orderId) === row.articleId) {
+        existing.firstOrder += row.revenue
+      } else {
+        existing.repeatOrders.push(row.revenue)
+      }
+    }
+    articleOrders.set(row.articleId, existing)
+  }
+
+  const results: ArticleLTV[] = []
+
+  for (const [articleId, data] of articleOrders) {
+    const article = revenueData.find((r) => r.articleId === articleId)?.article
+    if (!article) continue
+
+    const totalOrders = data.orderId.size
+    const repeatOrderRevenue = data.repeatOrders.reduce((s, r) => s + r, 0)
+    const ltv = data.firstOrder + repeatOrderRevenue
+    const repeatRate = totalOrders > 1 ? (data.repeatOrders.length / totalOrders) : 0
+    const ltvRatio = data.firstOrder > 0 ? ltv / data.firstOrder : 1
+    const tier: ArticleLTV['tier'] = ltvRatio > 3 ? 'platinum' : ltvRatio > 2 ? 'gold' : ltvRatio > 1.5 ? 'silver' : 'bronze'
+
+    results.push({
+      articleId,
+      title: article.title ?? '',
+      url: article.wpPostUrl ?? '',
+      firstOrderRevenue: data.firstOrder,
+      repeatOrderRevenue,
+      ltv,
+      repeatRate,
+      avgRepeatOrders: totalOrders > 0 ? data.repeatOrders.length / totalOrders : 0,
+      ltvRatio,
+      tier,
+    })
+  }
+
+  return results.sort((a, b) => b.ltv - a.ltv)
+}
+
+export async function calculateArticleROI(siteId: string): Promise<ArticleROI[]> {
+  const articleRevenues = await prisma.articleRevenue.findMany({
+    where: { siteId },
+    include: { article: { select: { id: true, title: true, wpPostUrl: true, wordCount: true, publishedAt: true } } },
+  })
+
+  const results: ArticleROI[] = []
+
+  for (const ar of articleRevenues) {
+    const wordCount = ar.article.wordCount ?? 1000
+    const estimatedHours = wordCount / 500
+    const hourlyRate = 150
+    const estimatedProductionCost = estimatedHours * hourlyRate
+
+    const monthsSincePublish = ar.article.publishedAt
+      ? Math.max(1, (Date.now() - ar.article.publishedAt.getTime()) / (30 * 86400000))
+      : 12
+
+    const monthlyRevenue = ar.totalRevenue / monthsSincePublish
+    const roi = estimatedProductionCost > 0 ? ((ar.totalRevenue - estimatedProductionCost) / estimatedProductionCost) * 100 : 0
+    const paybackMonths = monthlyRevenue > 0 ? estimatedProductionCost / monthlyRevenue : 999
+
+    let recommendation = 'Performing well'
+    if (roi < 0) recommendation = 'Not yet profitable — needs traffic boost or CTA optimization'
+    else if (roi < 100) recommendation = 'Low ROI — expand content or add internal links from high-traffic pages'
+    else if (roi > 500) recommendation = 'Star performer — create supporting cluster articles'
+
+    results.push({
+      articleId: ar.articleId,
+      title: ar.article.title ?? '',
+      totalRevenue: ar.totalRevenue,
+      estimatedProductionCost,
+      roi: parseFloat(roi.toFixed(1)),
+      paybackMonths: parseFloat(paybackMonths.toFixed(1)),
+      monthlyRevenue: parseFloat(monthlyRevenue.toFixed(2)),
+      recommendation,
+    })
+  }
+
+  return results.sort((a, b) => b.roi - a.roi)
+}
+
 export async function getRevenueRecommendations(siteId: string): Promise<string> {
   const dashboard = await getRevenueDashboard(siteId)
 

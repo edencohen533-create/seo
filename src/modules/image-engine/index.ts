@@ -2,6 +2,52 @@ import { generateImage, generateSeoFilename } from '@/lib/images'
 import { generateJson } from '@/lib/claude'
 import { prisma } from '@/lib/prisma'
 
+export interface BrandStyleGuide {
+  primaryStyle: string
+  colorPalette: string
+  moodKeywords: string[]
+  avoidElements: string[]
+  lightingStyle: string
+  compositionRules: string
+}
+
+export async function getSiteStyleGuide(siteId: string): Promise<BrandStyleGuide> {
+  const site = await prisma.site.findUniqueOrThrow({ where: { id: siteId } })
+
+  const niche = site.niche ?? 'general'
+  const tone = site.brandTone ?? 'professional'
+
+  const styleMap: Record<string, BrandStyleGuide> = {
+    health: {
+      primaryStyle: 'photorealistic lifestyle, warm tones, natural environments',
+      colorPalette: 'warm whites, sage greens, earth tones',
+      moodKeywords: ['serene', 'natural', 'authentic', 'warm'],
+      avoidElements: ['medical equipment', 'sterile environments', 'text overlays', 'logos'],
+      lightingStyle: 'soft natural daylight, golden hour',
+      compositionRules: 'rule of thirds, shallow depth of field',
+    },
+    finance: {
+      primaryStyle: 'clean professional, modern office, confident people',
+      colorPalette: 'navy, gold, white, slate',
+      moodKeywords: ['professional', 'confident', 'modern', 'trustworthy'],
+      avoidElements: ['cash piles', 'coins', 'generic stock photos', 'text overlays'],
+      lightingStyle: 'bright even lighting, studio quality',
+      compositionRules: 'centered subjects, minimalist backgrounds',
+    },
+  }
+
+  const guide = styleMap[niche.toLowerCase()] ?? {
+    primaryStyle: `photorealistic lifestyle, ${tone}`,
+    colorPalette: 'natural, authentic',
+    moodKeywords: [tone, 'authentic', 'high-quality'],
+    avoidElements: ['text overlays', 'logos', 'watermarks'],
+    lightingStyle: 'natural daylight',
+    compositionRules: 'rule of thirds',
+  }
+
+  return guide
+}
+
 export interface ImagePlan {
   hero: ImageRequest
   contentImages: ImageRequest[]
@@ -21,53 +67,64 @@ export async function planImages(
   articleId: string,
   content: string,
   primaryKeyword: string,
-  altTexts: { position: string; text: string }[]
+  altTexts: { position: string; text: string }[],
+  siteId?: string
 ): Promise<ImagePlan> {
+  const styleGuide = siteId ? await getSiteStyleGuide(siteId) : null
+  const styleContext = styleGuide
+    ? `**Brand Style Guide:**
+- Style: ${styleGuide.primaryStyle}
+- Colors: ${styleGuide.colorPalette}
+- Mood: ${styleGuide.moodKeywords.join(', ')}
+- Avoid: ${styleGuide.avoidElements.join(', ')}
+- Lighting: ${styleGuide.lightingStyle}
+- Composition: ${styleGuide.compositionRules}`
+    : 'Style: photorealistic, natural light, lifestyle'
+
   const prompt = `
-אתה מומחה SEO ומיתוג ויזואלי. נתח את המאמר הזה וצור תכנית תמונות.
+אתה מומחה SEO ומיתוג ויזואלי. נתח את המאמר הזה וצור תכנית תמונות מותאמת למותג.
 
 **מילת מפתח:** ${primaryKeyword}
 **תוכן (קטוע):** ${content.substring(0, 1000)}...
 
-צור prompts לתמונות בסגנון lifestyle/wellness אנושי ואמיתי.
+${styleContext}
+
+צור prompts לתמונות שמחזקות את מסר המאמר ותואמות את style guide המותג.
 חשוב: ללא מוצרים, ללא טקסט בתמונה, ללא לוגו.
 
 החזר JSON:
 {
   "hero": {
-    "prompt": "תיאור מפורט באנגלית לתמונת הכותרת",
-    "style": "photorealistic, natural light, lifestyle"
+    "prompt": "תיאור מפורט באנגלית לתמונת הכותרת — חייב לשקף את ה-style guide",
+    "style": "photorealistic, natural light, lifestyle",
+    "intentMatch": "למה התמונה הזו מתאימה לכוונת החיפוש"
   },
   "contentImages": [
     {
       "position": "h2-1",
-      "prompt": "תיאור לתמונה לאחר H2 הראשון",
-      "style": "photorealistic, natural light"
+      "prompt": "תיאור מפורט באנגלית לתמונה",
+      "style": "photorealistic, natural light",
+      "intentMatch": "למה"
     },
     {
       "position": "h2-2",
       "prompt": "תיאור לתמונה לאחר H2 השני",
-      "style": "photorealistic, natural light"
+      "style": "photorealistic, natural light",
+      "intentMatch": "למה"
     },
     {
       "position": "h2-3",
       "prompt": "תיאור לתמונה לאחר H2 השלישי",
-      "style": "photorealistic, natural light"
+      "style": "photorealistic, natural light",
+      "intentMatch": "למה"
     }
   ]
 }
-
-עקרונות prompt:
-- "Natural, authentic lifestyle image"
-- תאר אנשים אמיתיים בסביבה טבעית
-- תאורה חמה ורכה
-- ללא מוצרים, ללא טקסט, ללא לוגו
-- מותג wellness/wellbeing
 `
 
   const plan = await generateJson<{
-    hero: { prompt: string; style: string }
-    contentImages: { position: string; prompt: string; style: string }[]
+    hero: { prompt: string; style: string; intentMatch?: string }
+    contentImages: { position: string; prompt: string; style: string; intentMatch?: string }[]
   }>(prompt, { model: 'claude-haiku-4-5-20251001', maxTokens: 1500 })
 
   const altMap = new Map(altTexts.map((a) => [a.position, a.text]))
@@ -140,6 +197,46 @@ export async function generateAllImages(articleId: string): Promise<void> {
     where: { id: articleId },
     data: { status: 'publishing' },
   })
+}
+
+export async function createImageVariant(
+  articleId: string,
+  siteId: string,
+  type: 'hero' | 'content',
+  alternativeAngle: string
+): Promise<string> {
+  const article = await prisma.article.findUniqueOrThrow({
+    where: { id: articleId },
+    select: { primaryKeyword: true, title: true },
+  })
+
+  const styleGuide = await getSiteStyleGuide(siteId)
+
+  const variantPrompt = `
+${alternativeAngle}, ${styleGuide.primaryStyle}, ${styleGuide.lightingStyle},
+subject: ${article.primaryKeyword}, ${styleGuide.moodKeywords.join(', ')},
+no text, no logos, ${styleGuide.compositionRules}, high quality photography
+`
+
+  const result = await generateImage({
+    prompt: variantPrompt,
+    width: type === 'hero' ? 1200 : 800,
+    height: type === 'hero' ? 630 : 500,
+  })
+
+  await prisma.imageVariant.create({
+    data: {
+      articleId,
+      siteId,
+      type,
+      prompt: variantPrompt,
+      url: result.url,
+      style: styleGuide.primaryStyle,
+      isActive: false,
+    },
+  })
+
+  return result.url
 }
 
 export function injectImagesIntoContent(

@@ -34,7 +34,13 @@ model Site {
   revenueData    RevenueData[]
   articleRevenues ArticleRevenue[]
   geoOptimizations GeoOptimization[]
-  linkEdges      LinkEdge[]
+  linkEdges           LinkEdge[]
+  performanceSnapshots PerformanceSnapshot[]
+  changeLogs           ChangeLog[]
+  siteBI               SiteBI[]
+  successPatterns      SiteSuccessPattern[]
+  coreWebVitals        CoreWebVitals[]
+  imageVariants        ImageVariant[]
 }
 
 model GscToken {
@@ -160,6 +166,8 @@ model Article {
   articleRevenue ArticleRevenue?
   geoOptimization GeoOptimization?
   topicArticles TopicArticle[]
+  changeLogs    ChangeLog[]
+  imageVariants ImageVariant[]
 
   @@index([siteId, status])
 }
@@ -409,4 +417,128 @@ model LinkEdge {
   @@unique([sourcePageId, targetPageId])
   @@index([siteId])
   @@index([targetPageId])
+}
+
+// ─── Data Layer — Historical Storage ─────────────────────
+model PerformanceSnapshot {
+  id          String   @id @default(cuid())
+  siteId      String
+  pageId      String?
+  url         String
+  snapshotDate DateTime @db.Date
+  period      String   @default("daily")
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  ctr         Float    @default(0)
+  position    Float    @default(0)
+  topQuery    String?
+  queryCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, url, snapshotDate, period])
+  @@index([siteId, snapshotDate])
+  @@index([pageId])
+}
+
+model ChangeLog {
+  id          String   @id @default(cuid())
+  siteId      String
+  articleId   String?
+  pageId      String?
+  changeType  String
+  field       String?
+  valueBefore String?  @db.Text
+  valueAfter  String?  @db.Text
+  metadata    Json?
+  performanceImpact Json?
+  measuredAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  site    Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  article Article? @relation(fields: [articleId], references: [id])
+
+  @@index([siteId, changeType])
+  @@index([articleId])
+}
+
+model SiteBI {
+  id              String   @id @default(cuid())
+  siteId          String
+  reportDate      DateTime @db.Date
+  reportType      String
+  data            Json
+  insights        Json?
+  createdAt       DateTime @default(now())
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, reportDate, reportType])
+  @@index([siteId, reportType])
+}
+
+// ─── Learning Engine ──────────────────────────────────────
+model SiteSuccessPattern {
+  id              String   @id @default(cuid())
+  siteId          String
+  patternType     String
+  patternKey      String
+  patternValue    String   @db.Text
+  confidence      Float    @default(0)
+  supportingCount Int      @default(0)
+  avgCtrLift      Float    @default(0)
+  avgPositionGain Float    @default(0)
+  examples        Json
+  lastUpdated     DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, patternType, patternKey])
+  @@index([siteId, confidence])
+}
+
+// ─── Technical SEO — Core Web Vitals ─────────────────────
+model CoreWebVitals {
+  id          String   @id @default(cuid())
+  siteId      String
+  url         String
+  device      String   @default("mobile")
+  lcp         Float?
+  fid         Float?
+  cls         Float?
+  ttfb        Float?
+  fcp         Float?
+  tbt         Float?
+  performanceScore Int?
+  measuredAt  DateTime @default(now())
+  source      String   @default("pagespeed")
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, measuredAt])
+  @@index([url])
+}
+
+// ─── Image A/B Testing ────────────────────────────────────
+model ImageVariant {
+  id          String   @id @default(cuid())
+  articleId   String
+  siteId      String
+  type        String
+  prompt      String   @db.Text
+  url         String?
+  wpMediaId   Int?
+  style       String?
+  isActive    Boolean  @default(false)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  ctr         Float    @default(0)
+  createdAt   DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  site    Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([articleId])
 }

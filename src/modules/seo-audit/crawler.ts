@@ -304,3 +304,114 @@ ${topIssues.slice(0, 3).map((i) => `- ${i.code}: ${i.count} עמודים`).join(
 `
   return generate(prompt, { model: 'claude-haiku-4-5-20251001', maxTokens: 300 })
 }
+
+export interface CoreWebVitalsResult {
+  url: string
+  device: 'mobile' | 'desktop'
+  lcp: number | null
+  fid: number | null
+  cls: number | null
+  ttfb: number | null
+  fcp: number | null
+  performanceScore: number | null
+  lcpStatus: 'good' | 'needs-improvement' | 'poor'
+  clsStatus: 'good' | 'needs-improvement' | 'poor'
+  ttfbStatus: 'good' | 'needs-improvement' | 'poor'
+  recommendations: string[]
+}
+
+export async function measureCoreWebVitals(
+  siteId: string,
+  url: string,
+  device: 'mobile' | 'desktop' = 'mobile'
+): Promise<CoreWebVitalsResult> {
+  const apiKey = process.env.PAGESPEED_API_KEY
+
+  try {
+    const params = new URLSearchParams({
+      url,
+      strategy: device,
+      category: 'performance',
+      ...(apiKey ? { key: apiKey } : {}),
+    })
+
+    const res = await axios.get(
+      `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}`,
+      { timeout: 30000 }
+    )
+
+    const data = res.data
+    const audits = data.lighthouseResult?.audits ?? {}
+    const cats = data.lighthouseResult?.categories ?? {}
+
+    const lcp = audits['largest-contentful-paint']?.numericValue ?? null
+    const fid = audits['total-blocking-time']?.numericValue ?? null
+    const cls = audits['cumulative-layout-shift']?.numericValue ?? null
+    const ttfb = audits['server-response-time']?.numericValue ?? null
+    const fcp = audits['first-contentful-paint']?.numericValue ?? null
+    const performanceScore = cats.performance?.score ? Math.round(cats.performance.score * 100) : null
+
+    const lcpStatus = !lcp ? 'poor' : lcp <= 2500 ? 'good' : lcp <= 4000 ? 'needs-improvement' : 'poor'
+    const clsStatus = !cls ? 'poor' : cls <= 0.1 ? 'good' : cls <= 0.25 ? 'needs-improvement' : 'poor'
+    const ttfbStatus = !ttfb ? 'poor' : ttfb <= 800 ? 'good' : ttfb <= 1800 ? 'needs-improvement' : 'poor'
+
+    const recommendations: string[] = []
+    if (lcpStatus !== 'good') recommendations.push(`LCP ${(lcp! / 1000).toFixed(1)}s — optimize images and server response`)
+    if (clsStatus !== 'good') recommendations.push(`CLS ${cls?.toFixed(3)} — add size attributes to images/embeds`)
+    if (ttfbStatus !== 'good') recommendations.push(`TTFB ${ttfb}ms — improve server response time`)
+    if (fid && fid > 300) recommendations.push(`TBT ${fid}ms — reduce JavaScript execution time`)
+
+    await prisma.coreWebVitals.create({
+      data: {
+        siteId,
+        url,
+        device,
+        lcp: lcp ? lcp / 1000 : null,
+        fid: fid ?? null,
+        cls: cls ?? null,
+        ttfb: ttfb ?? null,
+        fcp: fcp ? fcp / 1000 : null,
+        performanceScore,
+        source: 'pagespeed',
+      },
+    })
+
+    return { url, device, lcp, fid, cls, ttfb, fcp, performanceScore, lcpStatus, clsStatus, ttfbStatus, recommendations }
+  } catch {
+    return {
+      url, device, lcp: null, fid: null, cls: null, ttfb: null, fcp: null, performanceScore: null,
+      lcpStatus: 'poor', clsStatus: 'poor', ttfbStatus: 'poor',
+      recommendations: ['PageSpeed API unavailable — set PAGESPEED_API_KEY'],
+    }
+  }
+}
+
+export async function auditSiteWebVitals(siteId: string): Promise<{
+  avgScore: number
+  poorUrls: string[]
+  goodUrls: string[]
+  summary: string
+}> {
+  const articles = await prisma.article.findMany({
+    where: { siteId, status: 'published', wpPostUrl: { not: null } },
+    select: { wpPostUrl: true },
+    take: 20,
+  })
+
+  const results = await Promise.allSettled(
+    articles.slice(0, 10).map((a) => measureCoreWebVitals(siteId, a.wpPostUrl!, 'mobile'))
+  )
+
+  const successful = results.filter((r): r is PromiseFulfilledResult<CoreWebVitalsResult> => r.status === 'fulfilled').map((r) => r.value)
+
+  const avgScore = successful.length > 0 && successful.some((r) => r.performanceScore !== null)
+    ? Math.round(successful.reduce((s, r) => s + (r.performanceScore ?? 0), 0) / successful.filter((r) => r.performanceScore !== null).length)
+    : 0
+
+  const poorUrls = successful.filter((r) => (r.performanceScore ?? 100) < 50).map((r) => r.url)
+  const goodUrls = successful.filter((r) => (r.performanceScore ?? 0) >= 90).map((r) => r.url)
+
+  const summary = `Core Web Vitals audit: ${successful.length} pages measured. Average score: ${avgScore}/100. ${poorUrls.length} pages need improvement.`
+
+  return { avgScore, poorUrls, goodUrls, summary }
+}
