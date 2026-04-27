@@ -24,7 +24,7 @@ function getAspectRatio(width: number, height: number): string {
 }
 
 export async function generateImage(options: ImageGenerationOptions): Promise<GeneratedImage> {
-  const apiKey = process.env.NANO_BANANA_API_KEY
+  const apiKey = process.env.NANO_BANANA_API_KEY ?? process.env.nanobanana
 
   if (!apiKey) {
     return generatePlaceholderImage(options)
