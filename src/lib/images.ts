@@ -1,4 +1,4 @@
-import axios from 'axios'
+import { GoogleGenAI } from '@google/genai'
 import sharp from 'sharp'
 
 export interface ImageGenerationOptions {
@@ -14,37 +14,44 @@ export interface GeneratedImage {
   buffer?: Buffer
 }
 
+function getAspectRatio(width: number, height: number): string {
+  const ratio = width / height
+  if (ratio >= 1.7) return '16:9'
+  if (ratio >= 1.2) return '4:3'
+  if (ratio >= 0.9) return '1:1'
+  if (ratio >= 0.7) return '3:4'
+  return '9:16'
+}
+
 export async function generateImage(options: ImageGenerationOptions): Promise<GeneratedImage> {
   const apiKey = process.env.NANO_BANANA_API_KEY
-  const apiUrl = process.env.NANO_BANANA_API_URL ?? 'https://api.nanobanana.io/v1'
 
   if (!apiKey) {
     return generatePlaceholderImage(options)
   }
 
   try {
-    const res = await axios.post(
-      `${apiUrl}/generate`,
-      {
-        prompt: options.prompt,
-        negative_prompt: options.negativePrompt ?? 'text, watermark, blurry, low quality, nsfw',
-        width: options.width ?? 1200,
-        height: options.height ?? 630,
-        style: options.style ?? 'photorealistic',
-        num_inference_steps: 30,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 60000,
-      }
-    )
+    const ai = new GoogleGenAI({ apiKey })
+    const aspectRatio = getAspectRatio(options.width ?? 1200, options.height ?? 630)
 
-    return { url: res.data.url ?? res.data.image_url }
-  } catch {
-    console.warn('Image generation failed, using placeholder')
+    const response = await ai.models.generateImages({
+      model: 'imagen-3.0-generate-001',
+      prompt: options.prompt,
+      config: {
+        numberOfImages: 1,
+        outputMimeType: 'image/jpeg',
+        aspectRatio,
+      },
+    })
+
+    const imageBytes = response.generatedImages?.[0]?.image?.imageBytes
+    if (!imageBytes) throw new Error('No image returned from Imagen')
+
+    const buffer = Buffer.from(imageBytes, 'base64')
+    const base64 = `data:image/jpeg;base64,${imageBytes}`
+    return { url: base64, buffer }
+  } catch (err) {
+    console.warn('Image generation failed, using placeholder:', err)
     return generatePlaceholderImage(options)
   }
 }
