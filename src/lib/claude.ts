@@ -1,9 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
 
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-})
-
 export type ClaudeModel = 'claude-opus-4-7' | 'claude-sonnet-4-6' | 'claude-haiku-4-5-20251001'
 
 export interface GenerateOptions {
@@ -13,7 +9,17 @@ export interface GenerateOptions {
   temperature?: number
 }
 
+function getClient(): Anthropic {
+  const apiKey =
+    process.env.CLAUDE_API_KEY ??
+    process.env.ANTHROPIC_API_KEY ??
+    process.env.seo
+  if (!apiKey) throw new Error('Missing API key: set CLAUDE_API_KEY in environment variables.')
+  return new Anthropic({ apiKey })
+}
+
 export async function generate(prompt: string, options: GenerateOptions = {}): Promise<string> {
+  const client = getClient()
   const response = await client.messages.create({
     model: options.model ?? 'claude-sonnet-4-6',
     max_tokens: options.maxTokens ?? 8000,
@@ -40,6 +46,7 @@ export async function* generateStream(
   prompt: string,
   options: GenerateOptions = {}
 ): AsyncGenerator<string> {
+  const client = getClient()
   const stream = await client.messages.stream({
     model: options.model ?? 'claude-sonnet-4-6',
     max_tokens: options.maxTokens ?? 8000,

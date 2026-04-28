@@ -1,13 +1,16 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  schemas  = ["seo"]
 }
 
 model Site {
+
   id             String   @id @default(cuid())
   name           String
   domain         String   @unique
@@ -41,9 +44,11 @@ model Site {
   successPatterns      SiteSuccessPattern[]
   coreWebVitals        CoreWebVitals[]
   imageVariants        ImageVariant[]
+  @@schema("seo")
 }
 
 model GscToken {
+
   id           String   @id @default(cuid())
   siteId       String   @unique
   accessToken  String   @db.Text
@@ -53,9 +58,11 @@ model GscToken {
   updatedAt    DateTime @updatedAt
 
   site         Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  @@schema("seo")
 }
 
 model Page {
+
   id          String   @id @default(cuid())
   siteId      String
   url         String
@@ -76,9 +83,11 @@ model Page {
 
   @@unique([siteId, url])
   @@index([siteId, status])
+  @@schema("seo")
 }
 
 model Keyword {
+
   id           String   @id @default(cuid())
   siteId       String
   keyword      String
@@ -92,9 +101,11 @@ model Keyword {
 
   @@unique([siteId, keyword])
   @@index([siteId])
+  @@schema("seo")
 }
 
 model KeywordPage {
+
   keywordId String
   pageId    String
   isPrimary Boolean @default(false)
@@ -103,9 +114,11 @@ model KeywordPage {
   page    Page    @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
   @@id([keywordId, pageId])
+  @@schema("seo")
 }
 
 model Opportunity {
+
   id          String   @id @default(cuid())
   siteId      String
   keywordId   String?
@@ -129,9 +142,11 @@ model Opportunity {
 
   @@index([siteId, status])
   @@index([siteId, priority])
+  @@schema("seo")
 }
 
 model Article {
+
   id                String    @id @default(cuid())
   siteId            String
   opportunityId     String?
@@ -151,6 +166,9 @@ model Article {
   wordCount         Int?
   wpPostUrl         String?
   errorLog          String?   @db.Text
+  audience          String?
+  imagePrompt       String?   @db.Text
+  imageHistory      Json?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   publishedAt       DateTime?
@@ -170,9 +188,11 @@ model Article {
   imageVariants ImageVariant[]
 
   @@index([siteId, status])
+  @@schema("seo")
 }
 
 model ArticleImage {
+
   id        String   @id @default(cuid())
   articleId String
   type      String
@@ -186,9 +206,11 @@ model ArticleImage {
   createdAt DateTime @default(now())
 
   article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  @@schema("seo")
 }
 
 model Performance {
+
   id          String   @id @default(cuid())
   siteId      String
   pageId      String?
@@ -205,9 +227,11 @@ model Performance {
   @@unique([siteId, query, date])
   @@index([siteId, date])
   @@index([pageId, date])
+  @@schema("seo")
 }
 
 model SeoAudit {
+
   id         String   @id @default(cuid())
   siteId     String
   url        String
@@ -216,10 +240,12 @@ model SeoAudit {
   createdAt  DateTime @default(now())
 
   @@index([siteId])
+  @@schema("seo")
 }
 
 // ─── Intent Engine ───────────────────────────────────────
 model IntentAnalysis {
+
   id              String   @id @default(cuid())
   siteId          String
   query           String
@@ -239,10 +265,12 @@ model IntentAnalysis {
 
   @@unique([siteId, query])
   @@index([siteId])
+  @@schema("seo")
 }
 
 // ─── Topical Authority Engine ─────────────────────────────
 model TopicMap {
+
   id            String   @id @default(cuid())
   siteId        String   @unique
   niche         String
@@ -257,9 +285,11 @@ model TopicMap {
 
   site     Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
   articles TopicArticle[]
+  @@schema("seo")
 }
 
 model TopicArticle {
+
   id           String   @id @default(cuid())
   topicMapId   String
   articleId    String?
@@ -274,10 +304,12 @@ model TopicArticle {
 
   topicMap TopicMap @relation(fields: [topicMapId], references: [id], onDelete: Cascade)
   article  Article? @relation(fields: [articleId], references: [id])
+  @@schema("seo")
 }
 
 // ─── CTR Engine ────────────────────────────────────────────
 model TitleVariant {
+
   id          String   @id @default(cuid())
   articleId   String
   title       String
@@ -293,10 +325,12 @@ model TitleVariant {
   updatedAt   DateTime @updatedAt
 
   article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  @@schema("seo")
 }
 
 // ─── Experiment Engine ────────────────────────────────────
 model Experiment {
+
   id           String   @id @default(cuid())
   siteId       String
   articleId    String?
@@ -318,10 +352,12 @@ model Experiment {
   article Article? @relation(fields: [articleId], references: [id])
 
   @@index([siteId, status])
+  @@schema("seo")
 }
 
 // ─── Refresh Engine v2 ────────────────────────────────────
 model ContentGap {
+
   id          String   @id @default(cuid())
   articleId   String
   siteId      String
@@ -339,10 +375,12 @@ model ContentGap {
 
   @@index([articleId, status])
   @@index([siteId, priority])
+  @@schema("seo")
 }
 
 // ─── Revenue Engine ───────────────────────────────────────
 model RevenueData {
+
   id          String   @id @default(cuid())
   siteId      String
   date        DateTime @db.Date
@@ -359,9 +397,11 @@ model RevenueData {
 
   @@index([siteId, date])
   @@index([articleId])
+  @@schema("seo")
 }
 
 model ArticleRevenue {
+
   id              String   @id @default(cuid())
   articleId       String   @unique
   siteId          String
@@ -376,10 +416,12 @@ model ArticleRevenue {
   site    Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
 
   @@index([siteId, totalRevenue])
+  @@schema("seo")
 }
 
 // ─── GEO Engine (Generative Engine Optimization) ─────────
 model GeoOptimization {
+
   id                String   @id @default(cuid())
   articleId         String
   siteId            String
@@ -397,10 +439,12 @@ model GeoOptimization {
   site    Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
 
   @@unique([articleId])
+  @@schema("seo")
 }
 
 // ─── Internal Link Graph ──────────────────────────────────
 model LinkEdge {
+
   id           String   @id @default(cuid())
   siteId       String
   sourcePageId String
@@ -417,10 +461,12 @@ model LinkEdge {
   @@unique([sourcePageId, targetPageId])
   @@index([siteId])
   @@index([targetPageId])
+  @@schema("seo")
 }
 
 // ─── Data Layer — Historical Storage ─────────────────────
 model PerformanceSnapshot {
+
   id          String   @id @default(cuid())
   siteId      String
   pageId      String?
@@ -440,9 +486,11 @@ model PerformanceSnapshot {
   @@unique([siteId, url, snapshotDate, period])
   @@index([siteId, snapshotDate])
   @@index([pageId])
+  @@schema("seo")
 }
 
 model ChangeLog {
+
   id          String   @id @default(cuid())
   siteId      String
   articleId   String?
@@ -461,9 +509,11 @@ model ChangeLog {
 
   @@index([siteId, changeType])
   @@index([articleId])
+  @@schema("seo")
 }
 
 model SiteBI {
+
   id              String   @id @default(cuid())
   siteId          String
   reportDate      DateTime @db.Date
@@ -476,10 +526,12 @@ model SiteBI {
 
   @@unique([siteId, reportDate, reportType])
   @@index([siteId, reportType])
+  @@schema("seo")
 }
 
 // ─── Learning Engine ──────────────────────────────────────
 model SiteSuccessPattern {
+
   id              String   @id @default(cuid())
   siteId          String
   patternType     String
@@ -497,10 +549,12 @@ model SiteSuccessPattern {
 
   @@unique([siteId, patternType, patternKey])
   @@index([siteId, confidence])
+  @@schema("seo")
 }
 
 // ─── Technical SEO — Core Web Vitals ─────────────────────
 model CoreWebVitals {
+
   id          String   @id @default(cuid())
   siteId      String
   url         String
@@ -519,10 +573,12 @@ model CoreWebVitals {
 
   @@index([siteId, measuredAt])
   @@index([url])
+  @@schema("seo")
 }
 
 // ─── Image A/B Testing ────────────────────────────────────
 model ImageVariant {
+
   id          String   @id @default(cuid())
   articleId   String
   siteId      String
@@ -541,4 +597,5 @@ model ImageVariant {
   site    Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
 
   @@index([articleId])
+  @@schema("seo")
 }
